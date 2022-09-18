@@ -1,18 +1,27 @@
 import inquirer from "inquirer";
 import Client, { AuthenticatedRole } from "vex-tm-client";
 import OBSWebSocket from "obs-websocket-js";
+import Keyv from 'keyv';
+
+const keyv = new Keyv('sqlite://config.sqlite');
 
 export async function getTournamentManagerCredentials(): Promise<{
   address: string;
   password: string;
 }> {
+  var tmAddress = await keyv.get('tmAddress');
+  var tmPassword = await keyv.get('tmPassword');
+  if(!tmAddress)
+  {
+    tmAddress = "127.0.0.1";
+  }
   return inquirer.prompt([
     {
       type: "input",
       message: "VEX TM Address:",
       name: "address",
       default() {
-        return "127.0.0.1";
+        return tmAddress;
       },
     },
     {
@@ -20,6 +29,9 @@ export async function getTournamentManagerCredentials(): Promise<{
       message: "VEX TM Password:",
       mask: "*",
       name: "password",
+      default() {
+        return tmPassword;
+      }
     },
   ]);
 }
@@ -28,13 +40,19 @@ export async function getOBSCredentials(): Promise<{
   address: string;
   password: string;
 }> {
+  var obsAddress = await keyv.get('obsAddress');
+  var obsPassword = await keyv.get('obsPassword');
+  if(!obsAddress)
+  {
+    obsAddress = "ws://127.0.0.1:4455";
+  }
   return inquirer.prompt([
     {
       type: "input",
       message: "OBS Websocket Address:",
       name: "address",
       default() {
-        return "ws://127.0.0.1:4455";
+        return obsAddress;
       },
     },
     {
@@ -42,6 +60,9 @@ export async function getOBSCredentials(): Promise<{
       message: "OBS Websocket (leave blank for no password):",
       mask: "*",
       name: "password",
+      default() {
+        return obsPassword;
+      },
     },
   ]);
 }
@@ -49,6 +70,10 @@ export async function getOBSCredentials(): Promise<{
 export async function getCredentials() {
   const tm = await getTournamentManagerCredentials();
   const obs = await getOBSCredentials();
+  await keyv.set('tmAddress', tm.address);
+  await keyv.set('tmPassword', tm.password);
+  await keyv.set('obsAddress', obs.address);
+  await keyv.set('obsPassword', obs.password);
 
   return { tm, obs };
 }

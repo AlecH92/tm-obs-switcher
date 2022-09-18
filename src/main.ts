@@ -6,16 +6,23 @@ import { join } from "path";
 import { promises as fs } from "fs";
 import { cwd } from "process";
 import Fieldset, { AudienceDisplayMode, AudienceDisplayOptions } from "vex-tm-client/out/Fieldset";
+import Keyv from 'keyv';
+
+const keyv = new Keyv('sqlite://config.sqlite');
 
 async function getFieldset(tm: Client) {
+  const defaultFieldSet = await keyv.get("fieldsetChoice");
   const response: { fieldset: string } = await inquirer.prompt([
     {
       name: "fieldset",
       type: "list",
       message: "Which fieldset do you wish to control? ",
       choices: tm.fieldsets.map((d) => d.name),
+      default: defaultFieldSet,
     },
   ]);
+
+  await keyv.set("fieldsetChoice", response.fieldset);
 
   return tm.fieldsets.find(
     (set) => set.name === response.fieldset
@@ -29,15 +36,18 @@ async function getAssociations(fieldset: Fieldset, obs: ObsWebSocket) {
   const associations: string[] = [];
 
   for (const field of fields) {
+    const fieldDefault = await keyv.get("field" + field.id + "SceneChoice");
     const response = await inquirer.prompt([
       {
         name: "scene",
         type: "list",
         message: `What scene do you want to associate with ${field.name}? `,
         choices: scenes.scenes.map((s) => s.sceneName),
+        default: fieldDefault,
       },
     ]);
     associations[field.id] = response.scene;
+    await keyv.set("field" + field.id + "SceneChoice", response.scene);
   };
 
   return associations;
@@ -52,15 +62,19 @@ async function getAudienceDisplayOptions() {
     { name: "Show saved score 3 seconds after match", value: "savedScore" },
     { name: "Flash rankings 3 seconds after every 6th match", value: "rankings" }
   ];
+  const audienceChoicesDefault = await keyv.get("audienceChoicesDefault");
 
   const response: { options: Choices[] } = await inquirer.prompt([
     {
       name: "options",
       type: "checkbox",
       message: "Which audience display automation would you like to enable?",
+      default: audienceChoicesDefault,
       choices
     }
   ]);
+
+  await keyv.set("audienceChoicesDefault", response.options);
 
   const flags = Object.fromEntries(choices.map(ch => [ch.value, false])) as Record<Choices, boolean>;
   for (const option of response.options) {
