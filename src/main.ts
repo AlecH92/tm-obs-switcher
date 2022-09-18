@@ -1,88 +1,15 @@
 import inquirer from "inquirer";
 import ObsWebSocket from "obs-websocket-js";
 import Client from "vex-tm-client";
-import { getCredentials, connectTM, connectOBS } from "./authenticate";
+import { getCredentials, connectTM, connectOBS, connectATEM } from "./authenticate";
 import { join } from "path";
 import { promises as fs } from "fs";
 import { cwd } from "process";
-import Fieldset, { AudienceDisplayMode, AudienceDisplayOptions } from "vex-tm-client/out/Fieldset";
+import { AudienceDisplayMode, AudienceDisplayOptions } from "vex-tm-client/out/Fieldset";
+import { getAssociations, getAudienceDisplayOptions, getFieldset, getRecordingOptions } from "./input";
 import Keyv from 'keyv';
 
 const keyv = new Keyv('sqlite://config.sqlite');
-
-async function getFieldset(tm: Client) {
-  const defaultFieldSet = await keyv.get("fieldsetChoice");
-  const response: { fieldset: string } = await inquirer.prompt([
-    {
-      name: "fieldset",
-      type: "list",
-      message: "Which fieldset do you wish to control? ",
-      choices: tm.fieldsets.map((d) => d.name),
-      default: defaultFieldSet,
-    },
-  ]);
-
-  await keyv.set("fieldsetChoice", response.fieldset);
-
-  return tm.fieldsets.find(
-    (set) => set.name === response.fieldset
-  ) as Fieldset;
-};
-
-async function getAssociations(fieldset: Fieldset, obs: ObsWebSocket) {
-  const fields = fieldset.fields;
-  const scenes = await obs.call("GetSceneList");
-
-  const associations: string[] = [];
-
-  for (const field of fields) {
-    const fieldDefault = await keyv.get("field" + field.id + "SceneChoice");
-    const response = await inquirer.prompt([
-      {
-        name: "scene",
-        type: "list",
-        message: `What scene do you want to associate with ${field.name}? `,
-        choices: scenes.scenes.map((s) => s.sceneName),
-        default: fieldDefault,
-      },
-    ]);
-    associations[field.id] = response.scene;
-    await keyv.set("field" + field.id + "SceneChoice", response.scene);
-  };
-
-  return associations;
-};
-
-async function getAudienceDisplayOptions() {
-
-  type Choices = "queueIntro" | "preventSwitch" | "savedScore" | "rankings";
-  const choices: { name: string; value: Choices }[] = [
-    { name: "Show intro upon match queue", value: "queueIntro" },
-    { name: "Prevent switching display mode in-match", value: "preventSwitch" },
-    { name: "Show saved score 3 seconds after match", value: "savedScore" },
-    { name: "Flash rankings 3 seconds after every 6th match", value: "rankings" }
-  ];
-  const audienceChoicesDefault = await keyv.get("audienceChoicesDefault");
-
-  const response: { options: Choices[] } = await inquirer.prompt([
-    {
-      name: "options",
-      type: "checkbox",
-      message: "Which audience display automation would you like to enable?",
-      default: audienceChoicesDefault,
-      choices
-    }
-  ]);
-
-  await keyv.set("audienceChoicesDefault", response.options);
-
-  const flags = Object.fromEntries(choices.map(ch => [ch.value, false])) as Record<Choices, boolean>;
-  for (const option of response.options) {
-    flags[option] = true;
-  };
-
-  return flags;
-};
 
 async function getRecordingPath(tm: Client): Promise<fs.FileHandle | undefined> {
 
@@ -131,17 +58,25 @@ async function getRecordingPath(tm: Client): Promise<fs.FileHandle | undefined> 
   console.log("✅ Tournament Manager");
 
   const obs = await connectOBS(creds.obs);
-  console.log("✅ Open Broadcaster Studio\n");
+  console.log("✅ Open Broadcaster Studio");
+
+  const atem = await connectATEM(creds.atem.address);
+  if (atem) {
+    console.log("✅ ATEM");
+  }
+
+  console.log("");
 
   // Configuration
   const fieldset = await getFieldset(tm);
   const fields = new Map(fieldset.fields.map((f) => [f.id, f]));
-  const associations = await getAssociations(fieldset, obs);
+  const associations = await getAssociations(fieldset, obs, atem);
 
   console.log("");
 
   const audienceDisplayOptions = await getAudienceDisplayOptions();
-  const timestampFile = await getRecordingPath(tm);
+  const { handle: timestampFile, recordIndividualMatches, division } = await getRecordingOptions(tm);
+
   console.log("");
 
   let queued = "";
@@ -156,13 +91,16 @@ async function getRecordingPath(tm: Client): Promise<fs.FileHandle | undefined> 
     // Get the current "stream time" in seconds
     let timecode = "00:00:00";
 
-    if (recordStatus.outputActive) {
+    if (recordStatus.outputActive && !recordIndividualMatches) {
       timecode = recordStatus.outputTimecode;
     } else if (streamStatus.outputActive) {
       timecode = streamStatus.outputTimecode;
     };
 
-    if (message.type === "fieldMatchAssigned") {
+    /**
+     * When a match is queued, switch to its associated scene
+     **/
+    async function fieldMatchAssigned() {
       const id = message.fieldId;
 
       // Elims won't have an assigned field, they can switch early, but we'll
@@ -176,9 +114,14 @@ async function getRecordingPath(tm: Client): Promise<fs.FileHandle | undefined> 
         name = "Unknown";
       };
 
-      console.log(`[${new Date().toISOString()}] [${timecode}] info: ${message.name} queued on ${name}, switching to scene ${associations[id]}`);
+      const association = associations[id];
+      console.log(`[${new Date().toISOString()}] [${timecode}] info: ${message.name} queued on ${name}, switching to scene ${association.obs}${association.atem ? ` and ATEM ${association.atem}` : ""}`);
 
-      await obs.call("SetCurrentProgramScene", { sceneName: associations[id] });
+      await obs.call("SetCurrentProgramScene", { sceneName: association.obs });
+
+      if (atem && association.atem) {
+        atem.changeProgramInput(association.atem);
+      };
 
       if (audienceDisplayOptions.queueIntro) {
         fieldset.setScreen(AudienceDisplayMode.INTRO);
@@ -187,9 +130,13 @@ async function getRecordingPath(tm: Client): Promise<fs.FileHandle | undefined> 
       // keep track of the queued match
       queued = message.name;
       started = false;
+    };
 
-      // Force the scene to switch when the match starts
-    } else if (message.type === "matchStarted") {
+    /**
+     * When the match starts, switch the scene to the appropriate field, and log to the timestamp
+     * file and console 
+     **/
+    async function matchStarted() {
       const id = message.fieldId;
 
       let name = fields.get(id)?.name;
@@ -197,23 +144,45 @@ async function getRecordingPath(tm: Client): Promise<fs.FileHandle | undefined> 
         name = "Unknown";
       };
 
-      console.log(`[${new Date().toISOString()}] [${timecode}] info: match ${started ? "resumed" : "started"} on ${name}, switching to scene ${associations[id]}`);
-      await obs.call("SetCurrentProgramScene", { sceneName: associations[id] });
+      const association = associations[id];
+      console.log(`[${new Date().toISOString()}] [${timecode}] info: match ${started ? "resumed" : "started"} on ${name}, switching to scene ${association.obs}${association.atem ? ` and ATEM ${association.atem}` : ""}`);
+
+      await obs.call("SetCurrentProgramScene", { sceneName: association.obs });
+
+      if (atem && association.atem) {
+        atem.changeProgramInput(association.atem);
+      };
 
       if (!started) {
         started = true;
-        timestampFile?.write(`${new Date().toISOString()},${timecode},${queued}\n`);
+
+        // Get information about the match
+        await division.refresh();
+        const match = division.matches.find((m) => m.name === message.name);
+
+        if (recordIndividualMatches) {
+          await obs.call("StartRecord");
+        }
+
+        await timestampFile?.write(`${new Date().toISOString()},${timecode},${queued},${match?.redTeams.join(" ")},${match?.blueTeams.join(" ")}\n`);
+
       }
+    }
 
-    } else if (message.type === "timeUpdated") {
-
+    /**
+     * Every second during the match, prevent switching
+     **/
+    async function timeUpdated() {
       // Force the audience display to be in-match during the entire match
       if (audienceDisplayOptions.preventSwitch) {
         fieldset.setScreen(AudienceDisplayMode.IN_MATCH);
       };
+    }
 
-    } else if (message.type === "matchStopped") {
-
+    /**
+     * When the match ends, switch to the end graphic (if appropriate)
+     **/
+    async function matchStopped() {
       matchCount++;
 
       // Show saved score 3 seconds after the match ends
@@ -229,7 +198,15 @@ async function getRecordingPath(tm: Client): Promise<fs.FileHandle | undefined> 
         }, 3000);
       };
 
-    } else if (message.type === "displayUpdated") {
+      if (recordIndividualMatches) {
+        await obs.call("StopRecord");
+      };
+    };
+
+    /**
+     * Disable showing saved score/rankings when the display switches to elim bracket or alliance selection
+     **/
+    async function displayUpdated() {
       const mode = message.display as AudienceDisplayMode;
       const option = message.displayOption as AudienceDisplayOptions;
 
@@ -243,5 +220,33 @@ async function getRecordingPath(tm: Client): Promise<fs.FileHandle | undefined> 
       };
 
     };
+
+    // Dispatch each event appropriately
+    switch (message.type) {
+      case "fieldMatchAssigned": {
+        await fieldMatchAssigned();
+        break;
+      }
+      case "matchStarted": {
+        await matchStarted();
+        break;
+      }
+      case "timeUpdated": {
+        await timeUpdated();
+        break;
+      }
+      case "matchStopped": {
+        await matchStopped();
+        break;
+      }
+      case "displayUpdated": {
+        await displayUpdated();
+        break;
+      }
+    }
   });
 })();
+
+process.on("exit", () => {
+  console.log("exiting...");
+});
