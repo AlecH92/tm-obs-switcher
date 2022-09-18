@@ -1,48 +1,9 @@
-import inquirer from "inquirer";
-import ObsWebSocket from "obs-websocket-js";
-import Client from "vex-tm-client";
 import { getCredentials, connectTM, connectOBS, connectATEM } from "./authenticate";
-import { join } from "path";
-import { promises as fs } from "fs";
-import { cwd } from "process";
 import { AudienceDisplayMode, AudienceDisplayOptions } from "vex-tm-client/out/Fieldset";
 import { getAssociations, getAudienceDisplayOptions, getFieldset, getRecordingOptions } from "./input";
 import Keyv from 'keyv';
 
 const keyv = new Keyv('sqlite://config.sqlite');
-
-async function getRecordingPath(tm: Client): Promise<fs.FileHandle | undefined> {
-
-  const response: { record: boolean } = await inquirer.prompt([
-    {
-      name: "record",
-      type: "confirm",
-      message: "Save a file with stream timestamps for each match?"
-    }
-  ]);
-
-  if (response.record) {
-    const directory = cwd();
-
-    const date = new Date();
-    const path = join(directory, `tm_obs_switcher_${date.getDate()}_${date.getMonth() + 1}_${date.getFullYear()}_times.csv`);
-
-    console.log(`  Will save match stream times to ${path}`);
-    const handle = await fs.open(path, "a");
-
-    const stat = await handle.stat();
-    
-   if (stat.size > 0) {
-      console.log(`  File already exists, will append new entries...`);
-   } else {
-      handle.write("TIMESTAMP,OBS_TIME,MATCH\n");
-   }
-
-    return handle
-  } else {
-    return undefined;
-  }
-};
 
 (async function () {
 
