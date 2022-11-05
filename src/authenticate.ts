@@ -111,8 +111,11 @@ export async function getCredentials() {
   
   await keyv.set('tmAddress', tm.address);
   await keyv.set('tmPassword', tm.password);
-  await keyv.set('obsAddress', obs.address);
-  await keyv.set('obsPassword', obs.password);
+  if(obs)
+  {
+    await keyv.set('obsAddress', obs.address);
+    await keyv.set('obsPassword', obs.password);
+  }
 
   return { tm, obs, atem };
 }
