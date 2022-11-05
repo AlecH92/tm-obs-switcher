@@ -40,13 +40,25 @@ export async function getTournamentManagerCredentials(): Promise<{
 export async function getOBSCredentials(): Promise<{
   address: string;
   password: string;
-}> {
+} | null> {
   var obsAddress = await keyv.get('obsAddress');
   var obsPassword = await keyv.get('obsPassword');
   if(!obsAddress)
   {
     obsAddress = "ws://127.0.0.1:4455";
   }
+
+  const { useOBS }: { useOBS: boolean } = await inquirer.prompt([{
+    type: "confirm",
+    name: "useOBS",
+    message: "Would you like to control OBS?",
+    default: true
+  }]);
+
+  if (!useOBS) {
+    return null;
+  }
+
   return inquirer.prompt([
     {
       type: "input",
@@ -68,7 +80,7 @@ export async function getOBSCredentials(): Promise<{
   ]);
 }
 
-export async function getATEMCredentials(): Promise<{ address: string | null }> {
+export async function getATEMCredentials(): Promise<{ address: string } | null> {
 
   const { useAtem }: { useAtem: boolean } = await inquirer.prompt([{
     type: "confirm",
@@ -87,7 +99,7 @@ export async function getATEMCredentials(): Promise<{ address: string | null }> 
 
     return { address };
   } else {
-    return { address: null };
+    return null;
   }
 
 };
@@ -144,8 +156,12 @@ export async function connectTM({
   return client;
 }
 
-export async function connectOBS(creds: { address: string; password: string }) {
+export async function connectOBS(creds: { address: string; password: string } | null) {
   const obs = new OBSWebSocket();
+
+  if (!creds) {
+    return null;
+  }
 
   try {
     await obs.connect(creds.address, creds.password);
@@ -158,9 +174,9 @@ export async function connectOBS(creds: { address: string; password: string }) {
   };
 }
 
-export async function connectATEM(address: string | null): Promise<Atem | null> {
+export async function connectATEM(creds: { address: string } | null): Promise<Atem | null> {
 
-  if (!address) {
+  if (!creds?.address) {
     return null;
   };
 
@@ -172,7 +188,7 @@ export async function connectATEM(address: string | null): Promise<Atem | null> 
     process.on("uncaughtException", () => { });
     process.on("unhandledRejection", () => { });
 
-    atem.connect(address);
+    atem.connect(creds?.address);
 
     const timeout = setTimeout(async () => {
       console.log("❌ ATEM: Could not connect to switcher");

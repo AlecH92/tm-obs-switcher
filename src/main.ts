@@ -19,9 +19,11 @@ const keyv = new Keyv('sqlite://config.sqlite');
   console.log("✅ Tournament Manager");
 
   const obs = await connectOBS(creds.obs);
-  console.log("✅ Open Broadcaster Studio");
+  if (obs) {
+    console.log("✅ Open Broadcaster Studio");
+  }
 
-  const atem = await connectATEM(creds.atem.address);
+  const atem = await connectATEM(creds.atem);
   if (atem) {
     console.log("✅ ATEM");
   }
@@ -36,7 +38,7 @@ const keyv = new Keyv('sqlite://config.sqlite');
   console.log("");
 
   const audienceDisplayOptions = await getAudienceDisplayOptions();
-  const { handle: timestampFile, recordIndividualMatches, division } = await getRecordingOptions(tm);
+  const { handle: timestampFile, recordIndividualMatches, division } = await getRecordingOptions(tm, obs);
 
   console.log("");
 
@@ -46,15 +48,15 @@ const keyv = new Keyv('sqlite://config.sqlite');
 
   fieldset.ws.on("message", async (data) => {
     const message = JSON.parse(data.toString());
-    const recordStatus = await obs.call("GetRecordStatus");
-    const streamStatus = await obs.call("GetStreamStatus");
+    const recordStatus = await obs?.call("GetRecordStatus");
+    const streamStatus = await obs?.call("GetStreamStatus");
 
     // Get the current "stream time" in seconds
     let timecode = "00:00:00";
 
-    if (recordStatus.outputActive && !recordIndividualMatches) {
+    if (recordStatus && recordStatus.outputActive && !recordIndividualMatches) {
       timecode = recordStatus.outputTimecode;
-    } else if (streamStatus.outputActive) {
+    } else if (streamStatus && streamStatus.outputActive) {
       timecode = streamStatus.outputTimecode;
     };
 
@@ -78,7 +80,9 @@ const keyv = new Keyv('sqlite://config.sqlite');
       const association = associations[id];
       console.log(`[${new Date().toISOString()}] [${timecode}] info: ${message.name} queued on ${name}, switching to scene ${association.obs}${association.atem ? ` and ATEM ${association.atem}` : ""}`);
 
-      await obs.call("SetCurrentProgramScene", { sceneName: association.obs });
+      if (obs && association.obs) {
+        await obs.call("SetCurrentProgramScene", { sceneName: association.obs });
+      }
 
       if (atem && association.atem) {
         atem.changeProgramInput(association.atem);
@@ -108,7 +112,9 @@ const keyv = new Keyv('sqlite://config.sqlite');
       const association = associations[id];
       console.log(`[${new Date().toISOString()}] [${timecode}] info: match ${started ? "resumed" : "started"} on ${name}, switching to scene ${association.obs}${association.atem ? ` and ATEM ${association.atem}` : ""}`);
 
-      await obs.call("SetCurrentProgramScene", { sceneName: association.obs });
+      if (obs && association.obs) {
+        await obs.call("SetCurrentProgramScene", { sceneName: association.obs });
+      }
 
       if (atem && association.atem) {
         atem.changeProgramInput(association.atem);
@@ -119,9 +125,9 @@ const keyv = new Keyv('sqlite://config.sqlite');
 
         // Get information about the match
         await division.refresh();
-        const match = division.matches.find((m) => m.name === message.name);
+        const match = division.matches.find((m) => m.name === queued);
 
-        if (recordIndividualMatches) {
+        if (obs && recordIndividualMatches) {
           await obs.call("StartRecord");
         }
 
@@ -159,7 +165,7 @@ const keyv = new Keyv('sqlite://config.sqlite');
         }, 3000);
       };
 
-      if (recordIndividualMatches) {
+      if (obs && recordIndividualMatches) {
         await obs.call("StopRecord");
       };
     };

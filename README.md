@@ -1,24 +1,13 @@
-# Tournament Manager OBS Switcher
+![TM Switcher](https://user-images.githubusercontent.com/8839926/194345784-558c3ab7-8e0b-4d5d-a789-0ef14376bb56.png)
 
-This is a small tool to automatically switch scenes in OBS when VEX Tournament
-Manager queues up a new match on a fieldset.
+
+Tournament Manager Switcher will automatically managing livestream switching for you when running tournaments in VEX Tournament Manager
 
 ![image](https://user-images.githubusercontent.com/8839926/153454145-18752edc-5022-4fa5-a0eb-538dfd4a5a1e.png)
 
-## Requirements
-
-- [OBS WebSocket
-  Plugin](https://obsproject.com/forum/resources/obs-websocket-remote-control-obs-studio-from-websockets.466/).
-  Required to programmatically control OBS
-
 ## Install
 
-1. Install the WebSocket plugin in OBS
-2. Head over to the
-   [releases](https://github.com/MayorMonty/tm-obs-switcher/releases) page and
-   download the latest version for your platform. Alternatively, you can clone
-   the repository and run the code from source.
-3. Unzip the executable, and run!
+Download the most recent build for your OS from [releases](https://github.com/MayorMonty/tm-obs-switcher/releases/), and run! 
 
 ## Run From Source
 
@@ -42,3 +31,15 @@ npm run-script build
 ```
 npm run-script run
 ```
+
+
+## Troubleshooting
+
+Some key implementation details to be aware of when deploying this at your event!
+
+- Make sure your LAN allows connections between devices! For our events, we will deploy our own router, attached to the upstream network. This is strongly reccomended if you use tablet scoring or multiple computers in your tournament. Additionally make sure that connections at the following ports are allowed between devices on your network: `80`, `4455`
+
+- Due to a quirk in the `atem-connection` module, ATEM control over USB is not supported. You will need to ensure that your switcher is connected to the network. Be advised that most ATEM switchers assign themselves static IPs (usually 192.168.10.240), so make sure that your router is able to assign that IP. Use the ATEM Setup utility over USB to connect 
+
+
+If your event runs into trouble with this tool, please reach out to me!.
