@@ -37,12 +37,12 @@ const keyv = new Keyv('sqlite://config.sqlite');
 
   console.log("");
 
-  const audienceDisplayOptions = await getAudienceDisplayOptions();
+  const audienceDisplayOptions = await getAudienceDisplayOptions(obs, atem);
   const { handle: timestampFile, recordIndividualMatches, division } = await getRecordingOptions(tm, obs);
 
   console.log("");
 
-  let queued = "";
+  let queued: any;
   let started = false;
   let matchCount = 0;
 
@@ -81,11 +81,21 @@ const keyv = new Keyv('sqlite://config.sqlite');
       console.log(`[${new Date().toISOString()}] [${timecode}] info: ${message.name} queued on ${name}, switching to scene ${association.obs}${association.atem ? ` and ATEM ${association.atem}` : ""}`);
 
       if (obs && association.obs) {
-        await obs.call("SetCurrentProgramScene", { sceneName: association.obs });
-      }
+        if (audienceDisplayOptions.useIntroAsInMatch) {
+          await obs.call("SetCurrentProgramScene", { sceneName: <string>audienceDisplayOptions.introObs });
+        }
+        else {
+          await obs.call("SetCurrentProgramScene", { sceneName: association.obs });
+        }
+      };
 
       if (atem && association.atem) {
-        atem.changeProgramInput(association.atem);
+        if (audienceDisplayOptions.useIntroAsInMatch) {
+          atem.changeProgramInput(<number>audienceDisplayOptions.introAtem);
+        }
+        else {
+          atem.changeProgramInput(association.atem);
+        }
       };
 
       if (audienceDisplayOptions.queueIntro) {
@@ -93,7 +103,8 @@ const keyv = new Keyv('sqlite://config.sqlite');
       }
 
       // keep track of the queued match
-      queued = message.name;
+      queued = message;
+      queued.association = association;
       started = false;
     };
 
@@ -125,13 +136,13 @@ const keyv = new Keyv('sqlite://config.sqlite');
 
         // Get information about the match
         await division.refresh();
-        const match = division.matches.find((m) => m.name === queued);
+        const match = division.matches.find((m) => m.name === queued.name);
 
         if (obs && recordIndividualMatches) {
           await obs.call("StartRecord");
         }
 
-        await timestampFile?.write(`${new Date().toISOString()},${timecode},${queued},${match?.redTeams.join(" ")},${match?.blueTeams.join(" ")}\n`);
+        await timestampFile?.write(`${new Date().toISOString()},${timecode},${queued.name},${match?.redTeams.join(" ")},${match?.blueTeams.join(" ")}\n`);
 
       }
     }
@@ -141,7 +152,7 @@ const keyv = new Keyv('sqlite://config.sqlite');
      **/
     async function timeUpdated() {
       // Force the audience display to be in-match during the entire match
-      if (audienceDisplayOptions.preventSwitch) {
+      if (audienceDisplayOptions.preventSwitch && started) {
         fieldset.setScreen(AudienceDisplayMode.IN_MATCH);
       };
     }
@@ -159,11 +170,17 @@ const keyv = new Keyv('sqlite://config.sqlite');
           fieldset.setScreen(AudienceDisplayMode.RANKINGS);
         }, 3000);
       } else if (audienceDisplayOptions.savedScore) {
+        //ideally, we would only switch to Saved Results if we hadn't already shown that match's scores, but we don't have access to that info from the webclient?
         setTimeout(() => {
           console.log(`[${new Date().toISOString()}] info: switching audience display to Saved Match Results`);
           fieldset.setScreen(AudienceDisplayMode.SAVED_MATCH_RESULTS);
-        }, 3000);
-      };
+        }, 5000);
+        //also return to intro after 10 seconds (match ends > 5 seconds > saved results > 10 more seconds > intro)
+        setTimeout(() => {
+          console.log(`[${new Date().toISOString()}] info: switching audience display to Intro`);
+          fieldset.setScreen(AudienceDisplayMode.INTRO);
+        }, 15000);
+      }
 
       if (obs && recordIndividualMatches) {
         await obs.call("StopRecord");
@@ -184,11 +201,44 @@ const keyv = new Keyv('sqlite://config.sqlite');
           audienceDisplayOptions.savedScore = false;
           audienceDisplayOptions.rankings = false;
         };
+      }
+      else if (mode == AudienceDisplayMode.INTRO) {
+        //for intro, return to the defined OBS scene
+        if (obs) {
+          await obs.call("SetCurrentProgramScene", { sceneName: <string>audienceDisplayOptions.introObs });
+        }
+
+        if (atem) {
+          atem.changeProgramInput(<number>audienceDisplayOptions.introAtem);
+        }
+      }
+      else if (mode == AudienceDisplayMode.IN_MATCH) {
+        //switch to the matching in-match display(s)?
+        if (obs && queued?.association.obs) {
+          await obs.call("SetCurrentProgramScene", { sceneName: queued.association.obs });
+        }
+
+        if (atem && queued?.association.atem) {
+          atem.changeProgramInput(queued.association.atem);
+        };
+      }
+      else {
+        console.log(`Switched to display ${AudienceDisplayMode[mode]}`)
+        //otherwise, return to default audience display
+        const association = associations[99]; //audience display association
+        if (obs && association.obs) {
+          await obs.call("SetCurrentProgramScene", { sceneName: association.obs });
+        }
+
+        if (atem && association.atem) {
+          atem.changeProgramInput(association.atem);
+        }
       };
 
     };
 
     // Dispatch each event appropriately
+    console.log(`message ${message.type}`);
     switch (message.type) {
       case "fieldMatchAssigned": {
         await fieldMatchAssigned();
